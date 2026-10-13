@@ -56,6 +56,10 @@ function fmtPct(r) {
   return (r > 0 ? "+" : "") + (r * 100).toFixed(1) + "%";
 }
 
+function fmtScore(s) {
+  return s === null || s === undefined ? "—" : Number(s).toFixed(1);
+}
+
 function deltaClass(n) {
   return n > 0 ? "up" : n < 0 ? "down" : "";
 }
@@ -128,8 +132,13 @@ function renderRank() {
         el("td", { class: "title" }, titleButton(it.id, title), it.status_tags.map((t) => el("span", { class: "tag hot" }, t))),
         el("td", { class: "num" }, fmtNum(g.hot)),
         el("td", { class: "num " + deltaClass(g.d_hot) }, fmtDelta(g.d_hot)),
-        el("td", { class: "num" }, fmtNum(g.fav), " ", el("small", { class: deltaClass(g.d_fav) }, fmtDelta(g.d_fav))),
-        el("td", { class: "num" }, g.score ?? "—"),
+        el(
+          "td",
+          { class: "num" },
+          fmtNum(g.fav),
+          g.d_fav === null || g.d_fav === undefined ? null : el("small", { class: deltaClass(g.d_fav) }, " " + fmtDelta(g.d_fav)),
+        ),
+        el("td", { class: "num" }, fmtScore(g.score)),
         el("td", { class: "num" }, it.streak + " 天"),
         el("td", { class: "tags" }, (g.tags || []).slice(0, 3).join(" / ")),
       ),
@@ -281,7 +290,7 @@ async function openDetail(id) {
     ...[
       `${s.eps ?? "—"} 集`,
       `上线 ${firstDay}`,
-      `评分 ${s.score ?? "—"}`,
+      `评分 ${fmtScore(s.score)}`,
       `${fmtNum(s.rating_cnt)} 人评分`,
       `${fmtNum(s.review_cnt)} 条评论`,
       (s.tags || []).join(" / "),
