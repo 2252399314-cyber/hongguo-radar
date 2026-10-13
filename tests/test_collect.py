@@ -1,0 +1,132 @@
+import unittest
+from datetime import date
+
+from radar import collect as C
+from radar.http import SPIDER_UA
+from tests.helpers import FakeFetcher, detail_html, rank_html, search_html
+
+TODAY = date(2026, 10, 14)
+DEFAULT_RANKS = {
+    "hot": [("1", 1), ("2", 2), ("3", 3)],
+    "real": [("1", 1), ("4", 2), ("5", 3)],
+    "ai": [("2", 1), ("6", 2), ("7", 3)],
+    "comic": [("8", 1), ("9", 2), ("10", 3)],
+}
+
+
+def build_pages(updated_text="10月14日已更新", ranks=None, details=(), extra=None):
+    """每个榜拆成两页；为所有在榜的剧和 details 里的剧生成详情页。"""
+    ranks = ranks or DEFAULT_RANKS
+    pages = {}
+    for key, items in ranks.items():
+        slug = C.RANK_SLUGS[key]
+        pages[C.rank_url(slug, 1)] = rank_html(slug, updated_text, items[:2], 2)
+        pages[C.rank_url(slug, 2)] = rank_html(slug, updated_text, items[2:], 2)
+    ids = {sid for items in ranks.values() for sid, _ in items} | set(details)
+    for sid in ids:
+        pages[C.detail_url(sid)] = detail_html(sid)
+    pages.update(extra or {})
+    return pages
+
+
+def run(pages, watch_entries=(), watch_cache=None, history=(), fetcher=None, **kwargs):
+    fetcher = fetcher or FakeFetcher(pages)
+    return C.collect(
+        fetcher,
+        TODAY,
+        list(watch_entries),
+        {} if watch_cache is None else watch_cache,
+        list(history),
+        now="2026-10-14T04:00:00Z",
+        min_rank_items=3,
+        **kwargs,
+    )
+
+
+class CollectTest(unittest.TestCase):
+    def test_happy_path(self):
+        snap = run(build_pages())
+        self.assertEqual(snap["date"], "2026-10-14")
+        self.assertEqual(snap["fetched_at"], "2026-10-14T04:00:00Z")
+        self.assertEqual(set(snap["ranks"]), {"hot", "real", "ai", "comic"})
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-14")
+        self.assertEqual(
+            snap["ranks"]["hot"]["items"],
+            [
+                {"id": "1", "rank": 1, "title": "剧1", "status_tags": []},
+                {"id": "2", "rank": 2, "title": "剧2", "status_tags": []},
+                {"id": "3", "rank": 3, "title": "剧3", "status_tags": []},
+            ],
+        )
+        self.assertEqual(len(snap["series"]), 10)
+        one = snap["series"]["1"]
+        self.assertEqual(one["sources"], ["rank:hot", "rank:real"])
+        self.assertEqual(one["score"], 8.5)
+        self.assertEqual((one["hot"], one["fav"], one["like"]), (1000, 100, 10))
+        self.assertEqual(snap["errors"], [])
+        self.assertEqual(snap["watchlist"], [])
+
+    def test_rank_pages_use_spider_ua(self):
+        fetcher = FakeFetcher(build_pages())
+        run(None, fetcher=fetcher)
+        for url, ua in fetcher.calls:
+            if "/rank/" in url:
+                self.assertEqual(ua, SPIDER_UA)
+            else:
+                self.assertNotEqual(ua, SPIDER_UA)
+
+    def test_not_updated_raises(self):
+        with self.assertRaises(C.NotUpdated):
+            run(build_pages(updated_text="10月13日已更新"))
+
+    def test_allow_stale_still_writes(self):
+        snap = run(build_pages(updated_text="10月13日已更新"), allow_stale=True)
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-13")
+        self.assertEqual(len(snap["series"]), 10)
+
+    def test_too_few_items_raises(self):
+        with self.assertRaises(C.CollectError):
+            run(build_pages(ranks={"hot": [("1", 1), ("2", 2)]}))
+
+    def test_watchlist_and_recently_dropped_are_tracked(self):
+        pages = build_pages(
+            details=("800", "900000", "77"),
+            extra={C.search_url("剧X"): search_html([("剧X", "800"), ("剧X外传", "801")])},
+        )
+        history = [
+            {"date": "2026-09-01", "ranks": {"hot": {"rank_date": "2026-09-01", "items": [{"id": "66", "rank": 1}]}}, "series": {}},
+            {"date": "2026-10-10", "ranks": {"hot": {"rank_date": "2026-10-10", "items": [{"id": "77", "rank": 5}]}}, "series": {}},
+        ]
+        # 链接里的编号至少 6 位才会被识别（见 watchlist.ID_PATTERNS）
+        snap = run(pages, watch_entries=["剧X", "https://hongguoduanju.com/player/900000"], history=history)
+        self.assertEqual(snap["series"]["800"]["sources"], ["watch"])
+        self.assertEqual(snap["series"]["900000"]["sources"], ["watch"])
+        self.assertEqual(snap["series"]["77"]["sources"], ["recent"])
+        self.assertNotIn("66", snap["series"])
+        self.assertEqual(
+            snap["watchlist"],
+            [
+                {"entry": "剧X", "status": "ok", "id": "800"},
+                {"entry": "https://hongguoduanju.com/player/900000", "status": "ok", "id": "900000"},
+            ],
+        )
+
+    def test_detail_failures_within_limit(self):
+        pages = build_pages()
+        del pages[C.detail_url("10")]
+        snap = run(pages)
+        self.assertIsNone(snap["series"]["10"])
+        self.assertEqual(len(snap["errors"]), 1)
+        self.assertEqual(snap["errors"][0]["stage"], "detail")
+        self.assertEqual(snap["errors"][0]["id"], "10")
+
+    def test_detail_failures_over_limit_raise(self):
+        pages = build_pages()
+        del pages[C.detail_url("9")]
+        del pages[C.detail_url("10")]
+        with self.assertRaises(C.CollectError):
+            run(pages)
+
+
+if __name__ == "__main__":
+    unittest.main()
