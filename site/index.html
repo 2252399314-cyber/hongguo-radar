@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>红果榜单雷达</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <h1>红果榜单雷达</h1>
+  <div id="status" class="status">加载中…</div>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-tab="rank" class="active">官方榜</button>
+  <button data-tab="surge">飙升榜</button>
+  <button data-tab="watch">观察列表</button>
+</nav>
+<main>
+  <section id="view-rank">
+    <div class="toolbar">
+      <div class="seg" id="rank-keys">
+        <button data-key="hot" class="active">综合</button>
+        <button data-key="real">真人</button>
+        <button data-key="ai">AI</button>
+        <button data-key="comic">漫剧</button>
+      </div>
+      <input id="rank-q" type="search" placeholder="搜索剧名">
+    </div>
+    <div class="table-wrap"><table id="rank-table"></table></div>
+    <h3 class="sub">今日掉榜</h3>
+    <div id="dropped" class="dropped"></div>
+  </section>
+  <section id="view-surge" hidden>
+    <div class="toolbar">
+      <div class="seg" id="surge-sort">
+        <button data-sort="d_hot" class="active">热度日增</button>
+        <button data-sort="d_fav">收藏日增</button>
+        <button data-sort="r_hot">热度增长率</button>
+      </div>
+      <div class="seg" id="surge-type">
+        <button data-type="all" class="active">全部</button>
+        <button data-type="real">真人</button>
+        <button data-type="ai">AI</button>
+        <button data-type="comic">漫剧</button>
+        <button data-type="unknown">未知</button>
+      </div>
+    </div>
+    <p id="surge-note" class="note"></p>
+    <div class="table-wrap"><table id="surge-table"></table></div>
+  </section>
+  <section id="view-watch" hidden>
+    <p class="note">在仓库的 watchlist.txt 里每行写一个剧名或红果链接，下一次采集生效。</p>
+    <div class="table-wrap"><table id="watch-table"></table></div>
+  </section>
+</main>
+<dialog id="detail">
+  <div class="detail-head">
+    <h2 id="d-title"></h2>
+    <button id="d-close" aria-label="关闭">✕</button>
+  </div>
+  <div id="d-info" class="d-info"></div>
+  <div class="chart-box"><canvas id="d-metrics"></canvas></div>
+  <div class="chart-box"><canvas id="d-ranks"></canvas></div>
+  <a id="d-link" target="_blank" rel="noopener">去红果看 →</a>
+</dialog>
+</body>
+</html>
