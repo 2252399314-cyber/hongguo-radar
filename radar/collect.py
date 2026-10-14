@@ -24,7 +24,7 @@ class CollectError(Exception):
 
 
 class NotUpdated(Exception):
-    """官方榜单还没更新到今天。"""
+    """官方榜单内容和上一份快照完全相同，说明今天还没刷新。"""
 
 
 def rank_url(slug: str, page: int) -> str:
@@ -55,6 +55,20 @@ def fetch_rank(fetcher, slug: str, today: date) -> Dict[str, Any]:
             seen.add(item["id"])
             unique.append(item)
     return {"rank_date": rank_date, "items": unique}
+
+
+def previous_snapshot(history: List[Dict[str, Any]], today: date) -> Optional[Dict[str, Any]]:
+    earlier = [s for s in history if s["date"] < today.isoformat()]
+    return max(earlier, key=lambda s: s["date"]) if earlier else None
+
+
+def same_ranks(ranks: Dict[str, Dict[str, Any]], previous: Dict[str, Any]) -> bool:
+    """4 个榜的名次序列都和上一份快照一样。400 个位置碰巧全同几乎不可能，只能是官方还没刷新。"""
+    for key, rank in ranks.items():
+        old = (previous.get("ranks") or {}).get(key)
+        if not old or [it["id"] for it in old["items"]] != [it["id"] for it in rank["items"]]:
+            return False
+    return True
 
 
 def recent_rank_ids(history: List[Dict[str, Any]], today: date) -> List[str]:
@@ -93,10 +107,12 @@ def collect(
             rank = fetch_rank(fetcher, slug, today)
         except (FetchError, ParseError) as exc:
             raise CollectError(f"{key} 榜抓取失败: {exc}") from exc
-        if rank["rank_date"] is None or len(rank["items"]) < min_rank_items:
-            raise CollectError(f"{key} 榜异常: {len(rank['items'])} 条, 榜单日期 {rank['rank_date']}")
+        if len(rank["items"]) < min_rank_items:
+            raise CollectError(f"{key} 榜异常: 只有 {len(rank['items'])} 条")
         ranks[key] = {
-            "rank_date": rank["rank_date"],
+            "rank_date": today.isoformat(),
+            # 页面上「X月X日已更新」解析出的日期。它只是按当天日期显示的文字，仅作记录
+            "label_date": rank["rank_date"],
             "items": [
                 {"id": it["id"], "rank": it["rank"], "title": it["title"], "status_tags": it["status_tags"]}
                 for it in rank["items"]
@@ -108,10 +124,13 @@ def collect(
                 info["score"] = it["score"]
             info["sources"].append(f"rank:{key}")
 
-    stale = [k for k, r in ranks.items() if r["rank_date"] != today.isoformat()]
-    if stale and not allow_stale:
-        detail = ", ".join(f"{k}={ranks[k]['rank_date']}" for k in stale)
-        raise NotUpdated(f"榜单尚未更新到 {today.isoformat()}: {detail}")
+    previous = previous_snapshot(history, today)
+    if previous and same_ranks(ranks, previous):
+        if not allow_stale:
+            raise NotUpdated(f"4 个榜的名次和 {previous['date']} 的快照完全相同")
+        # 强制写入时沿用上一份的榜单日，计算时按 rank_date 去重，不会重复计入在榜天数
+        for key, rank in ranks.items():
+            rank["rank_date"] = previous["ranks"][key]["rank_date"]
 
     # 2. 观察列表
     watch = resolve(watch_entries, lambda q: parse_search_page(fetcher.get(search_url(q))), watch_cache)

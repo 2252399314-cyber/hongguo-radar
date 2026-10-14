@@ -14,7 +14,9 @@
     python3 -m radar build-site                     # 生成 _site/
     python3 -m http.server 8765 --directory _site   # 本地预览
 
-`run` 的参数：`--force` 覆盖当天已有的快照；`--allow-stale` 官方榜单没更新也照常写快照；`--date YYYY-MM-DD` 指定日期。
+`run` 的参数：`--force` 覆盖当天已有的快照；`--allow-stale` 官方榜单和上一份快照完全相同（今天还没刷新）也照常写入；`--date YYYY-MM-DD` 指定日期。
+
+官方热度和榜单每天批量刷新一次，时间不固定（页面上的「X月X日已更新」只是按当天日期显示的文字）。所以定时任务一天检查多次，以「4 个榜的名次和上一份快照是否相同」来判断有没有刷新。
 
 ## 数据说明
 

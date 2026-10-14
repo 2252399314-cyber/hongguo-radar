@@ -29,6 +29,19 @@ def build_pages(updated_text="10月14日已更新", ranks=None, details=(), extr
     return pages
 
 
+def previous_snapshot(day, rank_date=None, ranks=None):
+    """和 build_pages 默认榜单内容完全相同的一份历史快照。"""
+    ranks = ranks or DEFAULT_RANKS
+    return {
+        "date": day,
+        "ranks": {
+            key: {"rank_date": rank_date or day, "items": [{"id": sid, "rank": rank} for sid, rank in items]}
+            for key, items in ranks.items()
+        },
+        "series": {},
+    }
+
+
 def run(pages, watch_entries=(), watch_cache=None, history=(), fetcher=None, **kwargs):
     fetcher = fetcher or FakeFetcher(pages)
     return C.collect(
@@ -75,14 +88,34 @@ class CollectTest(unittest.TestCase):
             else:
                 self.assertNotEqual(ua, SPIDER_UA)
 
-    def test_not_updated_raises(self):
-        with self.assertRaises(C.NotUpdated):
-            run(build_pages(updated_text="10月13日已更新"))
+    def test_label_date_is_kept_but_not_trusted(self):
+        # 页面上的「X月X日已更新」只是按当天日期显示的文字，记录下来但不用来判断是否刷新
+        snap = run(build_pages(updated_text="10月13日已更新"))
+        self.assertEqual(snap["ranks"]["hot"]["label_date"], "2026-10-13")
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-14")
 
-    def test_allow_stale_still_writes(self):
-        snap = run(build_pages(updated_text="10月13日已更新"), allow_stale=True)
-        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-13")
+    def test_same_ranks_as_previous_snapshot_raises(self):
+        with self.assertRaises(C.NotUpdated):
+            run(build_pages(), history=[previous_snapshot("2026-10-13")])
+
+    def test_allow_stale_reuses_previous_rank_date(self):
+        snap = run(build_pages(), history=[previous_snapshot("2026-10-13", rank_date="2026-10-12")], allow_stale=True)
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-12")
         self.assertEqual(len(snap["series"]), 10)
+
+    def test_changed_ranks_are_fresh(self):
+        prev = previous_snapshot("2026-10-13")
+        prev["ranks"]["comic"]["items"].reverse()
+        snap = run(build_pages(), history=[prev])
+        self.assertEqual(snap["ranks"]["comic"]["rank_date"], "2026-10-14")
+
+    def test_compares_with_latest_earlier_snapshot_only(self):
+        # 更早的快照和今天一样不算数，只和最近一份比
+        older = previous_snapshot("2026-10-12")
+        latest = previous_snapshot("2026-10-13")
+        latest["ranks"]["hot"]["items"].reverse()
+        snap = run(build_pages(), history=[older, latest])
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-14")
 
     def test_too_few_items_raises(self):
         with self.assertRaises(C.CollectError):

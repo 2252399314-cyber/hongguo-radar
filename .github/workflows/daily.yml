@@ -1,13 +1,18 @@
 name: daily
 
 on:
+  # 官方热度和榜单每天批量刷新一次，时间不固定。一天检查多次：
+  # 内容和上一份快照相同就什么都不做；刷新后的第一次运行写入快照，之后的运行看到快照已存在会跳过。
   schedule:
+    - cron: '30 2 * * *'  # 北京时间 10:30
     - cron: '0 4 * * *'   # 北京时间 12:00
-    - cron: '0 7 * * *'   # 北京时间 15:00，兜底，允许官方榜单未更新
+    - cron: '0 6 * * *'   # 北京时间 14:00
+    - cron: '0 9 * * *'   # 北京时间 17:00
+    - cron: '0 13 * * *'  # 北京时间 21:00
   workflow_dispatch:
     inputs:
       allow_stale:
-        description: '官方榜单没更新也写快照'
+        description: '官方榜单和上一份相同也写快照（一般不需要）'
         type: boolean
         default: false
       force:
@@ -28,6 +33,8 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,7 +45,7 @@ jobs:
       - name: Collect and derive
         run: |
           ARGS=""
-          if [ "${{ github.event.schedule }}" = "0 7 * * *" ] || [ "${{ inputs.allow_stale }}" = "true" ]; then
+          if [ "${{ inputs.allow_stale }}" = "true" ]; then
             ARGS="$ARGS --allow-stale"
           fi
           if [ "${{ inputs.force }}" = "true" ]; then
@@ -46,20 +53,24 @@ jobs:
           fi
           python -m radar run $ARGS
       - name: Commit data
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
           if git diff --cached --quiet; then
             echo "数据没有变化"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "data: $(TZ=Asia/Shanghai date +%F)"
           git pull --rebase origin main
           git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: collect
+    if: needs.collect.outputs.changed == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
