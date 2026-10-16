@@ -18,12 +18,17 @@ from radar.watchlist import parse_entries
 BEIJING = timezone(timedelta(hours=8))
 
 
-def beijing_today() -> date:
-    return datetime.now(BEIJING).date()
+REFRESH_HOUR = 9  # 官方每天上午 10 点左右刷新（2026-10-14 实测 09:54–09:59），9 点前抓到的还是前一天的批次
+
+
+def batch_date(now: datetime) -> date:
+    """这一刻能抓到的是哪一天的官方批次。GitHub 定时任务常常晚几个小时，凌晨补跑的要记到前一天。"""
+    local = now.astimezone(BEIJING)
+    return local.date() - timedelta(days=1) if local.hour < REFRESH_HOUR else local.date()
 
 
 def cmd_collect(store: Store, args: argparse.Namespace) -> int:
-    today = date.fromisoformat(args.date) if args.date else beijing_today()
+    today = date.fromisoformat(args.date) if args.date else batch_date(datetime.now(BEIJING))
     if store.has_snapshot(today.isoformat()) and not args.force:
         print(f"{today} 的快照已存在，跳过（加 --force 可重抓）")
         return 0
@@ -55,7 +60,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="radar", description="红果官方热度榜追踪")
     parser.add_argument("command", choices=["run", "collect", "derive", "build-site"])
     parser.add_argument("--root", default=".", help="仓库根目录，默认当前目录")
-    parser.add_argument("--date", help="按指定日期采集（YYYY-MM-DD，北京时间），默认今天")
+    parser.add_argument("--date", help="按指定批次日期采集（YYYY-MM-DD），默认按当前北京时间推算")
     parser.add_argument("--force", action="store_true", help="覆盖当天已有的快照")
     parser.add_argument("--allow-stale", action="store_true", help="官方榜单没更新也照常写快照")
     args = parser.parse_args(argv)

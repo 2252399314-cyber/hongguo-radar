@@ -219,6 +219,14 @@ class HistoryAndStatusTest(unittest.TestCase):
             self.assertEqual(read_json(derived / "status.json")["date"], "2026-10-02")
             self.assertEqual(len(read_json(derived / "series" / "a.json")["points"]), 2)
 
+    def test_derive_all_removes_orphan_series_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp))
+            store.write_snapshot(snap("2026-10-01", {"hot": ["a"]}, {"a": (100, 10, 1)}))
+            store.write_derived("series/gone.json", {"id": "gone"})
+            derive_all(store)
+            self.assertFalse((Path(tmp) / "data" / "derived" / "series" / "gone.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from radar.http import SPIDER_UA, FetchError
 from radar.parse import ParseError, parse_detail_page, parse_rank_page, parse_search_page
@@ -17,6 +17,8 @@ MAX_RANK_PAGES = 5
 MIN_RANK_ITEMS = 80
 MAX_DETAIL_FAIL_RATIO = 0.10
 LOOKBACK_DAYS = 14
+PROBE_SIZE = 5  # 判断是否刷新时比较综合榜前几名的热度
+MIN_PROBE = 3  # 至少要有这么多部可比，否则退回比较名次
 
 
 class CollectError(Exception):
@@ -62,8 +64,28 @@ def previous_snapshot(history: List[Dict[str, Any]], today: date) -> Optional[Di
     return max(earlier, key=lambda s: s["date"]) if earlier else None
 
 
+def is_stale(ranks: Dict[str, Dict[str, Any]], previous: Dict[str, Any], fetch_detail) -> bool:
+    """官方今天还没刷新吗？
+
+    热度是官方每天批量算一次的，最可靠：抓综合榜前几名的精确热度，和上一份快照比，全都没变就是没刷新。
+    名次不可靠：没刷新时也可能有零星变动（2026-10-15 就是这样）。上一份快照里可比的剧太少时，才退回比较名次。
+    """
+    old_series = previous.get("series") or {}
+    compared = []
+    for item in ranks["hot"]["items"][:PROBE_SIZE]:
+        old = old_series.get(item["id"])
+        if not old or old.get("hot") is None:
+            continue
+        _, detail, _ = fetch_detail(item["id"])
+        if detail and detail.get("hot") is not None:
+            compared.append(detail["hot"] == old["hot"])
+    if len(compared) >= MIN_PROBE:
+        return all(compared)
+    return same_ranks(ranks, previous)
+
+
 def same_ranks(ranks: Dict[str, Dict[str, Any]], previous: Dict[str, Any]) -> bool:
-    """4 个榜的名次序列都和上一份快照一样。400 个位置碰巧全同几乎不可能，只能是官方还没刷新。"""
+    """4 个榜的名次序列都和上一份快照一样。"""
     for key, rank in ranks.items():
         old = (previous.get("ranks") or {}).get(key)
         if not old or [it["id"] for it in old["items"]] != [it["id"] for it in rank["items"]]:
@@ -124,10 +146,22 @@ def collect(
                 info["score"] = it["score"]
             info["sources"].append(f"rank:{key}")
 
+    # 详情带缓存：判断是否刷新时抓过的剧，后面不再重复抓
+    detail_cache: Dict[str, Tuple[Optional[Dict[str, Any]], Optional[str]]] = {}
+
+    def fetch_detail(sid: str):
+        if sid not in detail_cache:
+            try:
+                detail_cache[sid] = (parse_detail_page(fetcher.get(detail_url(sid))), None)
+            except (FetchError, ParseError) as exc:
+                detail_cache[sid] = (None, str(exc)[:300])
+        detail, error = detail_cache[sid]
+        return sid, (dict(detail) if detail else None), error
+
     previous = previous_snapshot(history, today)
-    if previous and same_ranks(ranks, previous):
+    if previous and is_stale(ranks, previous, fetch_detail):
         if not allow_stale:
-            raise NotUpdated(f"4 个榜的名次和 {previous['date']} 的快照完全相同")
+            raise NotUpdated(f"官方数据和 {previous['date']} 的快照相同，今天还没刷新")
         # 强制写入时沿用上一份的榜单日，计算时按 rank_date 去重，不会重复计入在榜天数
         for key, rank in ranks.items():
             rank["rank_date"] = previous["ranks"][key]["rank_date"]
@@ -146,12 +180,6 @@ def collect(
     tracked = list(sources)
 
     # 4. 详情
-    def fetch_detail(sid: str):
-        try:
-            return sid, parse_detail_page(fetcher.get(detail_url(sid))), None
-        except (FetchError, ParseError) as exc:
-            return sid, None, str(exc)[:300]
-
     series: Dict[str, Optional[Dict[str, Any]]] = {}
     errors: List[Dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

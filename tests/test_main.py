@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -64,6 +65,18 @@ class MainTest(unittest.TestCase):
         with mock.patch.object(cli, "collect", return_value=dict(SNAP)) as fake, mock.patch.object(cli, "Fetcher"):
             cli.main(["collect", "--allow-stale"] + self.args)
         self.assertTrue(fake.call_args.kwargs["allow_stale"])
+
+
+class BatchDateTest(unittest.TestCase):
+    """官方每天上午 10 点左右刷新，9 点前抓到的还是前一天的批次。"""
+
+    def test_before_nine_is_previous_day(self):
+        self.assertEqual(cli.batch_date(datetime(2026, 10, 16, 1, 37, tzinfo=cli.BEIJING)), date(2026, 10, 15))
+        self.assertEqual(cli.batch_date(datetime(2026, 10, 16, 8, 59, tzinfo=cli.BEIJING)), date(2026, 10, 15))
+
+    def test_from_nine_is_same_day(self):
+        self.assertEqual(cli.batch_date(datetime(2026, 10, 16, 9, 0, tzinfo=cli.BEIJING)), date(2026, 10, 16))
+        self.assertEqual(cli.batch_date(datetime(2026, 10, 16, 23, 30, tzinfo=cli.BEIJING)), date(2026, 10, 16))
 
 
 if __name__ == "__main__":

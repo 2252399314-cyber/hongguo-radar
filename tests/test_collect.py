@@ -109,6 +109,28 @@ class CollectTest(unittest.TestCase):
         snap = run(build_pages(), history=[prev])
         self.assertEqual(snap["ranks"]["comic"]["rank_date"], "2026-10-14")
 
+    def test_unchanged_hot_means_not_refreshed(self):
+        # 2026-10-15 的真实情况：AI 榜名次有零星变动，但热度一个没变，官方其实还没刷新
+        prev = previous_snapshot("2026-10-13")
+        prev["ranks"]["ai"]["items"].reverse()
+        prev["series"] = {sid: {"hot": 1000} for sid in ["1", "2", "3"]}
+        with self.assertRaises(C.NotUpdated):
+            run(build_pages(), history=[prev])
+
+    def test_changed_hot_means_refreshed_even_if_ranks_same(self):
+        prev = previous_snapshot("2026-10-13")
+        prev["series"] = {sid: {"hot": 900} for sid in ["1", "2", "3"]}
+        snap = run(build_pages(), history=[prev])
+        self.assertEqual(snap["ranks"]["hot"]["rank_date"], "2026-10-14")
+
+    def test_probe_details_are_not_fetched_twice(self):
+        fetcher = FakeFetcher(build_pages())
+        prev = previous_snapshot("2026-10-13")
+        prev["series"] = {sid: {"hot": 900} for sid in ["1", "2", "3"]}
+        run(None, fetcher=fetcher, history=[prev])
+        urls = [u for u, _ in fetcher.calls]
+        self.assertEqual(len(urls), len(set(urls)))
+
     def test_compares_with_latest_earlier_snapshot_only(self):
         # 更早的快照和今天一样不算数，只和最近一份比
         older = previous_snapshot("2026-10-12")

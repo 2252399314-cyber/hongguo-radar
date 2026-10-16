@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import date, timedelta
 from typing import Any, Dict, List, Tuple
 
@@ -191,6 +192,8 @@ def derive_all(store) -> None:
     snapshots = store.load_snapshots()
     store.write_derived("ranks_latest.json", {key: rank_changes(snapshots, key) for key in RANK_KEYS})
     store.write_derived("growth_latest.json", growth(snapshots))
+    # 先清空再重写，快照被删除或改名后不会留下没人引用的旧文件
+    shutil.rmtree(store.derived_dir / "series", ignore_errors=True)
     for sid, history in series_histories(snapshots).items():
         store.write_derived(f"series/{sid}.json", history)
     store.write_derived("status.json", status(snapshots))
